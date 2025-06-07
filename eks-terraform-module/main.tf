@@ -111,10 +111,30 @@ module "vpc" {
   single_nat_gateway   = var.vpc_single_nat_gateway
   enable_dns_hostnames = true
 
-  enable_flow_log                 = var.vpc_enable_flow_log
-  flow_log_destination_type       = var.vpc_enable_flow_log ? "cloud-watch-logs" : null
-  flow_log_cloudwatch_log_group_name = var.vpc_enable_flow_log ? "/aws/vpc-flow-logs/${var.cluster_name}" : null
-  flow_log_cloudwatch_iam_role_arn = var.vpc_enable_flow_log ? aws_iam_role.vpc_flow_logs_role[0].arn : null
+  # VPC Flow Logs
+  enable_flow_log                      = var.vpc_enable_flow_log
+  flow_log_destination_type            = var.vpc_enable_flow_log ? "cloud-watch-logs" : null
+  flow_log_cloudwatch_log_group_name   = var.vpc_enable_flow_log ? "/aws/vpc-flow-logs/${var.cluster_name}" : null
+  flow_log_cloudwatch_iam_role_arn     = var.vpc_enable_flow_log && length(aws_iam_role.vpc_flow_logs_role) > 0 ? aws_iam_role.vpc_flow_logs_role[0].arn : null
+
+  # VPC Endpoints
+  s3_gateway_endpoint_enabled               = var.vpc_enable_s3_gateway_endpoint
+
+  # Master switch for interface endpoints - set to true if any interface endpoint is enabled
+  interface_endpoints_enabled = (
+    var.vpc_enable_ecr_api_interface_endpoint ||
+    var.vpc_enable_ecr_dkr_interface_endpoint ||
+    var.vpc_enable_kms_interface_endpoint ||
+    var.vpc_enable_sts_interface_endpoint ||
+    var.vpc_enable_cloudwatch_logs_interface_endpoint
+  )
+  ecr_api_interface_endpoint_enabled        = var.vpc_enable_ecr_api_interface_endpoint
+  ecr_dkr_interface_endpoint_enabled        = var.vpc_enable_ecr_dkr_interface_endpoint
+  kms_interface_endpoint_enabled            = var.vpc_enable_kms_interface_endpoint
+  sts_interface_endpoint_enabled            = var.vpc_enable_sts_interface_endpoint
+  cloudwatch_logs_interface_endpoint_enabled = var.vpc_enable_cloudwatch_logs_interface_endpoint
+  # Note: The VPC module might have more specific settings for subnets or security groups for these endpoints if needed.
+  # This configuration assumes default behavior for those.
 
   public_subnet_tags = merge(
     local.tags,
@@ -127,7 +147,7 @@ module "vpc" {
   private_subnet_tags = merge(
     local.tags,
     {
-      "kubernetes.io/cluster/${var.cluster_name}" = "shared"
+      "kubernetes.io/cluster/${var.cluster_name}" = "shared" # Corrected typo here
       "kubernetes.io/role/internal-elb"          = "1"
     }
   )

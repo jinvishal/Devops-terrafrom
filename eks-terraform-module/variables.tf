@@ -329,6 +329,42 @@ variable "vpc_enable_nat_gateway" {
   default     = true
 }
 
+variable "vpc_enable_s3_gateway_endpoint" {
+  description = "Enable the S3 Gateway VPC Endpoint. Recommended to keep traffic to S3 within the AWS network."
+  type        = bool
+  default     = true
+}
+
+variable "vpc_enable_ecr_api_interface_endpoint" {
+  description = "Enable the ECR API Interface VPC Endpoint (com.amazonaws.<region>.ecr.api). Recommended for private ECR access."
+  type        = bool
+  default     = true
+}
+
+variable "vpc_enable_ecr_dkr_interface_endpoint" {
+  description = "Enable the ECR DKR Interface VPC Endpoint (com.amazonaws.<region>.ecr.dkr). Recommended for private ECR image pulls/pushes."
+  type        = bool
+  default     = true
+}
+
+variable "vpc_enable_kms_interface_endpoint" {
+  description = "Enable the KMS Interface VPC Endpoint (com.amazonaws.<region>.kms). Important if using KMS CMKs for EKS secrets or other resources."
+  type        = bool
+  default     = true
+}
+
+variable "vpc_enable_sts_interface_endpoint" {
+  description = "Enable the STS Interface VPC Endpoint (com.amazonaws.<region>.sts). Important for IAM Roles for Service Accounts (IRSA) to function optimally without NAT Gateway traversal for token exchange."
+  type        = bool
+  default     = true
+}
+
+variable "vpc_enable_cloudwatch_logs_interface_endpoint" {
+  description = "Enable the CloudWatch Logs Interface VPC Endpoint (com.amazonaws.<region>.logs). Useful if applications/pods log heavily to CloudWatch Logs directly. Disabled by default due to potential data transfer costs if not carefully managed."
+  type        = bool
+  default     = false
+}
+
 variable "vpc_single_nat_gateway" {
   description = "Use a single NAT gateway. Requires vpc_enable_nat_gateway to be true."
   type        = bool
