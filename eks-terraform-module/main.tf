@@ -14,10 +14,16 @@ locals {
 
   # Loki S3 bucket: use specific var if provided, else use the general bucket name
   loki_s3_actual_bucket_name = var.install_loki_s3_backend && var.loki_s3_bucket_name == "" ? local.s3_bucket_name_default : var.loki_s3_bucket_name
+
+  # S3 Server Access Logs Bucket Configuration
+  s3_access_logs_bucket_actual_name = var.s3_access_logs_bucket_name_override != "" ? var.s3_access_logs_bucket_name_override : (var.enable_s3_server_access_logging ? "${var.cluster_name}-s3-access-logs-${data.aws_caller_identity.current.account_id}" : null)
+  create_s3_access_logs_bucket      = var.enable_s3_server_access_logging && var.s3_access_logs_bucket_name_override == ""
 }
 
 # Data sources
 data "aws_region" "current" {}
+
+data "aws_caller_identity" "current" {} # Ensure this is present
 
 data "aws_eks_cluster_auth" "main" {
   name = aws_eks_cluster.main.name
@@ -240,8 +246,7 @@ resource "aws_eks_node_group" "final_main_node_group" {
   )
 }
 
-# ECR Repository, S3 Bucket, WAF - unchanged from previous steps, ensure they are here
-
+# ECR Repository
 resource "aws_ecr_repository" "app_ecr_repo" {
   name                 = local.ecr_repo_name_default
   image_tag_mutability = "MUTABLE"
@@ -250,6 +255,7 @@ resource "aws_ecr_repository" "app_ecr_repo" {
   tags = local.tags
 }
 
+# General S3 Bucket (for Loki, general storage)
 resource "aws_s3_bucket" "general_s3_bucket" {
   bucket = local.s3_bucket_name_default
   tags   = local.tags
@@ -274,37 +280,116 @@ resource "aws_s3_bucket_public_access_block" "general_s3_bucket_public_access" {
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "general_s3_bucket_lifecycle" {
-  # Check if the general_s3_bucket itself is created by this module
-  # This resource should only be created if aws_s3_bucket.general_s3_bucket is managed here.
-  # Assuming general_s3_bucket is always created by this module for now.
   bucket = aws_s3_bucket.general_s3_bucket.id
-
   rule {
     id     = "lokiLogRetention"
     status = "Enabled"
-
-    filter {
-      prefix = "loki/" # Loki stores data under this prefix as per loki_values.yaml.tpl
-    }
-
-    expiration {
-      days = var.s3_loki_log_retention_days
-    }
-
-    noncurrent_version_expiration {
-      noncurrent_days = var.s3_loki_log_retention_days + 7 # Clean up old versions a bit later
-    }
-
-    abort_incomplete_multipart_upload {
-      days_after_initiation = 7
-    }
+    filter { prefix = "loki/" }
+    expiration { days = var.s3_loki_log_retention_days }
+    noncurrent_version_expiration { noncurrent_days = var.s3_loki_log_retention_days + 7 }
+    abort_incomplete_multipart_upload { days_after_initiation = 7 }
   }
-
-  depends_on = [aws_s3_bucket_versioning.general_s3_bucket_versioning] # Ensure versioning is enabled first
+  depends_on = [aws_s3_bucket_versioning.general_s3_bucket_versioning]
 }
 
+# S3 Bucket for Server Access Logs
+resource "aws_s3_bucket" "access_logs_s3_bucket" {
+  count  = local.create_s3_access_logs_bucket ? 1 : 0
+  bucket = local.s3_access_logs_bucket_actual_name
+  tags   = merge(local.tags, { Name = "${local.s3_access_logs_bucket_actual_name}-access-logs" })
+}
+
+resource "aws_s3_bucket_versioning" "access_logs_s3_bucket_versioning" {
+  count  = local.create_s3_access_logs_bucket ? 1 : 0
+  bucket = aws_s3_bucket.access_logs_s3_bucket[0].id
+  versioning_configuration { status = "Enabled" }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "access_logs_s3_bucket_encryption" {
+  count  = local.create_s3_access_logs_bucket ? 1 : 0
+  bucket = aws_s3_bucket.access_logs_s3_bucket[0].id
+  rule { apply_server_side_encryption_by_default { sse_algorithm = "AES256" } }
+}
+
+resource "aws_s3_bucket_public_access_block" "access_logs_s3_bucket_public_access" {
+  count  = local.create_s3_access_logs_bucket ? 1 : 0
+  bucket = aws_s3_bucket.access_logs_s3_bucket[0].id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "access_logs_s3_bucket_lifecycle" {
+  count  = local.create_s3_access_logs_bucket ? 1 : 0
+  bucket = aws_s3_bucket.access_logs_s3_bucket[0].id
+  rule {
+    id     = "logRetention"
+    status = "Enabled"
+    expiration { days = var.s3_access_logs_retention_days }
+    noncurrent_version_expiration { noncurrent_days = var.s3_access_logs_retention_days + 7 } # Or a different value for noncurrent log versions
+    abort_incomplete_multipart_upload { days_after_initiation = 7 }
+  }
+  depends_on = [aws_s3_bucket_versioning.access_logs_s3_bucket_versioning[0]]
+}
+
+data "aws_iam_policy_document" "access_logs_s3_bucket_policy_doc" {
+  count = local.create_s3_access_logs_bucket ? 1 : 0
+  statement {
+    sid    = "S3LogDeliveryWrite"
+    effect = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["logging.s3.amazonaws.com"]
+    }
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.access_logs_s3_bucket[0].arn}/*"] # Or specific prefix like "logs/"
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = [aws_s3_bucket.general_s3_bucket.arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "access_logs_s3_bucket_policy" {
+  count  = local.create_s3_access_logs_bucket ? 1 : 0
+  bucket = aws_s3_bucket.access_logs_s3_bucket[0].id
+  policy = data.aws_iam_policy_document.access_logs_s3_bucket_policy_doc[0].json
+}
+
+resource "aws_s3_bucket_logging" "general_s3_bucket_access_logging" {
+  count = var.enable_s3_server_access_logging ? 1 : 0
+
+  bucket = aws_s3_bucket.general_s3_bucket.id
+
+  target_bucket = local.s3_access_logs_bucket_actual_name
+  target_prefix = "${aws_s3_bucket.general_s3_bucket.id}-access-logs/" # Using source bucket ID as part of prefix
+
+  depends_on = [
+    # If the access logs bucket is created by this module, depend on its creation and policy.
+    # If an override bucket is used, these dependencies might not be strictly necessary here,
+    # but it's safer to include them if the resources are potentially managed by this module.
+    # The conditional creation of these resources means they might not exist in `terraform plan` if disabled.
+    # However, if var.enable_s3_server_access_logging is true, then s3_access_logs_bucket_actual_name is definitely set.
+    # If create_s3_access_logs_bucket is true, then these resources exist.
+    # If create_s3_access_logs_bucket is false (meaning override is used), these specific resources don't exist here.
+    # This dependency should ideally only be on resources that are definitely created when this resource is created.
+    # local.create_s3_access_logs_bucket can gate this.
+    # No, this is simpler: if logging is enabled, target_bucket is valid. If that target is created by us, it needs to be ready.
+    aws_s3_bucket.access_logs_s3_bucket,
+    aws_s3_bucket_policy.access_logs_s3_bucket_policy,
+  ]
+}
+
+# IAM Policy for Loki S3 Access
 resource "aws_iam_policy" "loki_s3_access_policy" {
-  name_prefix = var.cluster_name # To keep it shorter than the full policy name if it exceeds limits
+  name_prefix = var.cluster_name
   name        = "${var.cluster_name}-loki-s3-access-policy"
   description = "IAM policy granting Loki access to its S3 bucket prefix."
 
@@ -340,7 +425,7 @@ resource "aws_iam_policy" "loki_s3_access_policy" {
 
 # IAM Role for Loki Service Account (IRSA)
 data "aws_iam_policy_document" "loki_irsa_assume_role_policy" {
-  count = var.loki_enable_irsa ? 1 : 0 # Create policy doc only if IRSA is enabled
+  count = var.loki_enable_irsa ? 1 : 0
 
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -348,13 +433,13 @@ data "aws_iam_policy_document" "loki_irsa_assume_role_policy" {
 
     principals {
       type        = "Federated"
-      identifiers = [aws_eks_cluster.main.identity[0].oidc[0].provider] # Correct way to reference OIDC provider ARN
+      identifiers = [aws_eks_cluster.main.identity[0].oidc[0].provider]
     }
 
     condition {
       test     = "StringEquals"
-      variable = "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:sub" # OIDC Issuer URL without https://
-      values   = ["system:serviceaccount:${var.loki_namespace}:loki-sa"] # Matches SA name in loki_values.yaml.tpl
+      variable = "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:sub"
+      values   = ["system:serviceaccount:${var.loki_namespace}:loki-sa"]
     }
   }
 }
@@ -363,15 +448,16 @@ resource "aws_iam_role" "loki_irsa_role" {
   name_prefix        = "${var.cluster_name}-loki-irsa-"
   assume_role_policy = var.loki_enable_irsa ? data.aws_iam_policy_document.loki_irsa_assume_role_policy[0].json : null
   tags               = local.tags
-  count              = var.loki_enable_irsa ? 1 : 0 # Create role only if IRSA is enabled
+  count              = var.loki_enable_irsa ? 1 : 0
 }
 
 resource "aws_iam_role_policy_attachment" "loki_irsa_role_s3_policy_attachment" {
-  count      = var.loki_enable_irsa ? 1 : 0 # Attach only if IRSA role is created
+  count      = var.loki_enable_irsa ? 1 : 0
   role       = aws_iam_role.loki_irsa_role[0].name
   policy_arn = aws_iam_policy.loki_s3_access_policy.arn
 }
 
+# WAF and other resources continue below...
 resource "aws_wafv2_web_acl" "default_web_acl" {
   name  = local.waf_web_acl_name_default
   scope = "REGIONAL"
@@ -412,18 +498,17 @@ resource "helm_release" "metrics_server" {
   chart      = "metrics-server"
   version    = var.metrics_server_chart_version
   namespace  = var.metrics_server_namespace
-  create_namespace = true # kube-system should exist, but this is safe
+  create_namespace = true
 
   values = [yamlencode({
     args = [
       "--kubelet-insecure-tls",
       "--kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname",
-      "--kubelet-use-node-status-port" # Added for some environments
+      "--kubelet-use-node-status-port"
     ]
-    # replicas = 2 # Consider for HA
   })]
 
-  depends_on = [aws_eks_node_group.final_main_node_group] # Ensure nodes are ready
+  depends_on = [aws_eks_node_group.final_main_node_group]
 }
 
 # Loki Logging Stack
@@ -433,10 +518,10 @@ resource "kubernetes_namespace" "loki_ns" {
     name = var.loki_namespace
     labels = {
       "app.kubernetes.io/managed-by" = "Terraform"
-      "name" = var.loki_namespace # Label for easier identification
+      "name" = var.loki_namespace
     }
   }
-  lifecycle { # Prevent accidental deletion if something else adopts it
+  lifecycle {
     prevent_destroy = false
   }
 }
@@ -446,23 +531,23 @@ resource "helm_release" "loki" {
 
   name       = "loki"
   repository = "https://grafana.github.io/helm-charts"
-  chart      = "loki" # This is the simple scalable chart, formerly loki-simple-scalable
+  chart      = "loki"
   version    = var.loki_chart_version
   namespace  = var.loki_namespace
-  create_namespace = false # Using explicit kubernetes_namespace resource
+  create_namespace = false
 
   values = [templatefile("${path.module}/loki_values.yaml.tpl", {
     s3_bucket_name       = local.loki_s3_actual_bucket_name
     s3_region            = data.aws_region.current.name
     s3_enabled           = var.install_loki_s3_backend
-    loki_irsa_role_arn   = var.loki_enable_irsa && count.index < length(aws_iam_role.loki_irsa_role) ? aws_iam_role.loki_irsa_role[0].arn : null
+    loki_irsa_role_arn   = var.loki_enable_irsa && length(aws_iam_role.loki_irsa_role) > 0 ? aws_iam_role.loki_irsa_role[0].arn : null
   })]
 
   depends_on = [
     aws_eks_node_group.final_main_node_group,
-    kubernetes_namespace.loki_ns[0], # Ensure namespace exists
-    aws_s3_bucket.general_s3_bucket, # Ensure bucket exists if used for Loki
-    aws_iam_role.loki_irsa_role,     # Ensure IAM role for IRSA exists
+    kubernetes_namespace.loki_ns[0],
+    aws_s3_bucket.general_s3_bucket,
+    aws_iam_role.loki_irsa_role,
   ]
 }
 
@@ -470,7 +555,7 @@ resource "helm_release" "loki" {
 resource "aws_iam_policy" "aws_load_balancer_controller_iam_policy" {
   count = var.install_aws_load_balancer_controller ? 1 : 0
 
-  name_prefix = "${var.cluster_name}-ALBCtrl-" # Keep prefix short
+  name_prefix = "${var.cluster_name}-ALBCtrl-"
   name        = "${var.cluster_name}-AWSLoadBalancerControllerIAMPolicy"
   description = "IAM Policy for AWS Load Balancer Controller"
 
@@ -505,9 +590,9 @@ resource "aws_iam_policy" "aws_load_balancer_controller_iam_policy" {
                 "ec2:DescribeTags",
                 "ec2:GetCoipPoolUsage",
                 "ec2:DescribeCoipPools",
-                "ec2:GetSecurityGroupsForVpc", # Added from a newer version of the policy
-                "ec2:DescribeIpamPools",      # Added from a newer version of the policy
-                "ec2:DescribeRouteTables",    # Added from a newer version of the policy
+                "ec2:GetSecurityGroupsForVpc",
+                "ec2:DescribeIpamPools",
+                "ec2:DescribeRouteTables",
                 "elasticloadbalancing:DescribeLoadBalancers",
                 "elasticloadbalancing:DescribeLoadBalancerAttributes",
                 "elasticloadbalancing:DescribeListeners",
@@ -518,9 +603,9 @@ resource "aws_iam_policy" "aws_load_balancer_controller_iam_policy" {
                 "elasticloadbalancing:DescribeTargetGroupAttributes",
                 "elasticloadbalancing:DescribeTargetHealth",
                 "elasticloadbalancing:DescribeTags",
-                "elasticloadbalancing:DescribeTrustStores",      # Added from a newer version
-                "elasticloadbalancing:DescribeListenerAttributes", # Added from a newer version
-                "elasticloadbalancing:DescribeCapacityReservation" # Added from a newer version
+                "elasticloadbalancing:DescribeTrustStores",
+                "elasticloadbalancing:DescribeListenerAttributes",
+                "elasticloadbalancing:DescribeCapacityReservation"
             ],
             "Resource": "*"
         },
@@ -670,9 +755,9 @@ resource "aws_iam_policy" "aws_load_balancer_controller_iam_policy" {
                 "elasticloadbalancing:ModifyTargetGroup",
                 "elasticloadbalancing:ModifyTargetGroupAttributes",
                 "elasticloadbalancing:DeleteTargetGroup",
-                "elasticloadbalancing:ModifyListenerAttributes", # Added from newer version
-                "elasticloadbalancing:ModifyCapacityReservation", # Added from newer version
-                "elasticloadbalancing:ModifyIpPools"              # Added from newer version
+                "elasticloadbalancing:ModifyListenerAttributes",
+                "elasticloadbalancing:ModifyCapacityReservation",
+                "elasticloadbalancing:ModifyIpPools"
             ],
             "Resource": "*",
             "Condition": {
@@ -745,7 +830,7 @@ data "aws_iam_policy_document" "aws_load_balancer_controller_irsa_assume_role_po
     condition {
       test     = "StringEquals"
       variable = "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:sub"
-      values   = ["system:serviceaccount:kube-system:aws-load-balancer-controller"] # Standard SA name and namespace
+      values   = ["system:serviceaccount:kube-system:${var.aws_load_balancer_controller_service_account_name}"]
     }
   }
 }
@@ -753,7 +838,7 @@ data "aws_iam_policy_document" "aws_load_balancer_controller_irsa_assume_role_po
 resource "aws_iam_role" "aws_load_balancer_controller_irsa_role" {
   count = var.install_aws_load_balancer_controller ? 1 : 0
 
-  name_prefix        = "${var.cluster_name}-ALBCtrlIRSA-" # Keep prefix short
+  name_prefix        = "${var.cluster_name}-ALBCtrlIRSA-"
   assume_role_policy = data.aws_iam_policy_document.aws_load_balancer_controller_irsa_assume_role_policy[0].json
   tags               = local.tags
 }
@@ -788,73 +873,42 @@ resource "helm_release" "grafana" {
   chart      = "grafana"
   version    = var.grafana_chart_version
   namespace  = var.grafana_namespace
-  create_namespace = false # Using explicit kubernetes_namespace resource
-
-  # Values for Grafana
-  # Note: For complex structures like datasources, it's often better to use a values file
-  # or multiple `set` blocks with careful quoting if needed.
-  # The `set` block doesn't merge deeply, subsequent sets for the same top key overwrite.
-  # Using `set_sensitive` for adminPassword.
+  create_namespace = false
 
   set_sensitive {
     name  = "adminPassword"
     value = var.grafana_admin_password
   }
 
-  # Configure Loki Datasource
-  # The structure for datasources in Grafana chart can be tricky.
-  # It usually expects a YAML string under `datasources."datasources.yaml".datasources`
-  # or structured input. The `set` commands below attempt structured input.
-  # Refer to the Grafana chart's values.yaml for the exact structure.
-  # Example assumes a `datasources.yaml` key under `datasources`:
   values = [yamlencode({
     persistence = {
       enabled = true
-      storageClassName = "gp2" # Standard EBS, consider making this configurable (e.g. var.grafana_storage_class)
+      storageClassName = "gp2"
       size = "10Gi"
     }
-    # ingress = {
-    #   enabled = true
-    #   # hosts = ["grafana.example.com"] # Configure with your domain
-    # }
-    # serviceMonitor = { # If using Prometheus Operator
-    #   enabled = true
-    # }
     datasources = {
-      "datasources.yaml" = { # This key structure is common
+      "datasources.yaml" = {
         apiVersion = 1
         datasources = [
           {
             name = "Loki"
             type = "loki"
-            url = "http://loki.${var.loki_namespace}.svc.cluster.local:3100" # Assumes Loki service name & port
-            access = "proxy" # Server-side access
+            url = "http://loki.${var.loki_namespace}.svc.cluster.local:3100"
+            access = "proxy"
             isDefault = true
-            jsonData = { # Chart version 6.x+ might use this for some settings
-              # tlsSkipVerify = true # if using self-signed certs internally
-            }
+            jsonData = {}
           },
-          # Example for Prometheus (if you install it later)
-          # {
-          #   name = "Prometheus"
-          #   type = "prometheus"
-          #   url = "http://prometheus-server.prometheus.svc.cluster.local" # Adjust to your Prometheus service
-          #   access = "proxy"
-          # }
         ]
       }
     }
-    # Grafana image tag can be set if needed: grafana.image.tag
-    # Sidecar for dashboards/datasources: grafana.sidecar.*
-    # Test framework: grafana.testFramework.enabled = false (to speed up deployment)
-    testFramework = { # For chart versions around 7.x for Grafana
+    testFramework = {
         enabled = false
     }
   })]
 
   depends_on = [
     aws_eks_node_group.final_main_node_group,
-    helm_release.loki, # Grafana depends on Loki for its datasource
+    helm_release.loki,
     kubernetes_namespace.grafana_ns[0],
   ]
 }
@@ -867,16 +921,13 @@ resource "helm_release" "aws_load_balancer_controller_helm_release" {
   repository = "https://aws.github.io/eks-charts"
   chart      = "aws-load-balancer-controller"
   version    = var.aws_load_balancer_controller_chart_version
-  namespace  = "kube-system" # Standard namespace for LBC
+  namespace  = "kube-system"
 
   values = [yamlencode({
     clusterName = var.cluster_name
     region      = data.aws_region.current.name
     vpcId       = module.vpc.vpc_id
-    image = {
-      # repository = "amazon/aws-alb-ingress-controller" # Chart usually sets this
-      # tag = var.aws_load_balancer_controller_chart_version # Or specific image tag
-    }
+    image = {}
     serviceAccount = {
       create = true
       name   = var.aws_load_balancer_controller_service_account_name
@@ -884,25 +935,11 @@ resource "helm_release" "aws_load_balancer_controller_helm_release" {
         "eks.amazonaws.com/role-arn" = aws_iam_role.aws_load_balancer_controller_irsa_role[0].arn
       }
     }
-    # replicaCount = 2 # For HA
-    # resources = {
-    #   limits = {
-    #     cpu = "100m"
-    #     memory = "200Mi"
-    #   }
-    #   requests = {
-    #     cpu = "100m"
-    #     memory = "200Mi"
-    #   }
-    # }
-    # enableShield = false # Set to true if using AWS Shield Advanced
-    # enableWaf = false    # Set to true if using WAF Regional
-    # enableWafv2 = true   # Set to true if using WAFv2 (associated with the default_web_acl)
   })]
 
   depends_on = [
-    aws_eks_node_group.final_main_node_group, # Ensure nodes are available
-    aws_iam_role.aws_load_balancer_controller_irsa_role[0], # Ensure IRSA role and policy attachment are created
-    aws_eks_cluster.main, # Ensure cluster is up
+    aws_eks_node_group.final_main_node_group,
+    aws_iam_role.aws_load_balancer_controller_irsa_role[0],
+    aws_eks_cluster.main,
   ]
 }
