@@ -111,6 +111,24 @@ variable "install_metrics_server" {
   default     = true
 }
 
+variable "install_aws_load_balancer_controller" {
+  description = "Enable installation of the AWS Load Balancer Controller."
+  type        = bool
+  default     = true
+}
+
+variable "aws_load_balancer_controller_chart_version" {
+  description = "Helm chart version for the AWS Load Balancer Controller."
+  type        = string
+  default     = "1.7.1" # Specify a recent, known good version. Verify latest if possible.
+}
+
+variable "aws_load_balancer_controller_service_account_name" {
+  description = "Kubernetes service account name for the AWS Load Balancer Controller."
+  type        = string
+  default     = "aws-load-balancer-controller" # This must match the trusted SA in the IRSA role
+}
+
 variable "metrics_server_chart_version" {
   description = "Metrics Server Helm chart version."
   type        = string
