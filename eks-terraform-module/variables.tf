@@ -129,6 +129,24 @@ variable "aws_load_balancer_controller_service_account_name" {
   default     = "aws-load-balancer-controller" # This must match the trusted SA in the IRSA role
 }
 
+variable "enable_s3_server_access_logging" {
+  description = "Enable server access logging for the general S3 bucket. This will create a new S3 bucket to store these logs unless an override name is provided."
+  type        = bool
+  default     = true
+}
+
+variable "s3_access_logs_bucket_name_override" {
+  description = "Optional: Specify an existing S3 bucket name to store server access logs. If empty, a new bucket will be created. Ensure this bucket has appropriate permissions for s3-log-delivery-group."
+  type        = string
+  default     = ""
+}
+
+variable "s3_access_logs_retention_days" {
+  description = "Number of days to retain S3 server access logs in their dedicated bucket."
+  type        = number
+  default     = 90
+}
+
 variable "metrics_server_chart_version" {
   description = "Metrics Server Helm chart version."
   type        = string
