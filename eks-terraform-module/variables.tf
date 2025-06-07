@@ -243,10 +243,28 @@ variable "grafana_namespace" {
 }
 
 variable "grafana_admin_password" {
-  description = "Grafana admin password. IMPORTANT: Change this in production. Consider using a secrets manager."
+  description = "Grafana admin password. Used only if 'grafana_admin_password_secrets_manager_arn' is not provided. IMPORTANT: Change this in production if not using Secrets Manager."
   type        = string
   default     = "prom-operator" # Example, ensure this is changed
   sensitive   = true
+}
+
+variable "grafana_admin_password_secrets_manager_arn" {
+  description = "ARN of the AWS Secrets Manager secret containing the Grafana admin password. If provided, this takes precedence over 'grafana_admin_password'."
+  type        = string
+  default     = ""
+}
+
+variable "grafana_admin_password_secrets_manager_version_id" {
+  description = "Version ID of the secret in AWS Secrets Manager for the Grafana admin password. Defaults to the latest version if not specified."
+  type        = string
+  default     = null # Using null for optional arguments in data source
+}
+
+variable "grafana_admin_password_secrets_manager_version_stage" {
+  description = "Version stage of the secret in AWS Secrets Manager for the Grafana admin password. Defaults to 'AWSCURRENT' if not specified and version_id is also not set."
+  type        = string
+  default     = null # Using null for optional arguments in data source, data source defaults to AWSCURRENT if both are null
 }
 
 variable "s3_loki_log_retention_days" {

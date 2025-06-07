@@ -29,6 +29,14 @@ data "aws_eks_cluster_auth" "main" {
   name = aws_eks_cluster.main.name
 }
 
+data "aws_secretsmanager_secret_version" "grafana_admin_password_secret" {
+  count = var.grafana_admin_password_secrets_manager_arn != "" ? 1 : 0
+
+  secret_id     = var.grafana_admin_password_secrets_manager_arn
+  version_id    = var.grafana_admin_password_secrets_manager_version_id    # Will be null if not set, data source handles this
+  version_stage = var.grafana_admin_password_secrets_manager_version_stage # Will be null if not set, data source handles this (defaults to AWSCURRENT if both version_id and version_stage are null)
+}
+
 # Provider configurations
 provider "kubernetes" {
   host                   = aws_eks_cluster.main.endpoint
