@@ -10,6 +10,30 @@ variable "cluster_version" {
   default     = "1.27"
 }
 
+variable "eks_endpoint_public_access" {
+  description = "Controls whether the EKS cluster endpoint is publicly accessible."
+  type        = bool
+  default     = true
+}
+
+variable "eks_endpoint_private_access" {
+  description = "Controls whether the EKS cluster endpoint is accessible from within the VPC. If public access is disabled, private access must be enabled for kubectl and other API interactions from within the VPC."
+  type        = bool
+  default     = false # Defaulting to false to maintain current behavior unless explicitly changed.
+}
+
+variable "eks_public_access_cidrs" {
+  description = "List of CIDR blocks that are allowed to access the EKS public endpoint. Only applies if eks_endpoint_public_access is true. Default allows all IPs."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
+variable "eks_secrets_encryption_kms_key_arn" {
+  description = "Optional. ARN of the AWS KMS Customer Managed Key (CMK) to use for encrypting Kubernetes secrets in EKS. If not provided, EKS uses an AWS-managed KMS key. Ensure the EKS cluster IAM role has encrypt/decrypt permissions on this key."
+  type        = string
+  default     = "" # Defaulting to empty string, meaning CMK encryption is off by default.
+}
+
 variable "instance_type" {
   description = "The EC2 instance type for the worker nodes."
   type        = string
@@ -52,6 +76,17 @@ variable "ecr_repository_name" {
   description = "The name for the ECR repository. If empty, it defaults to '${var.cluster_name}-app-repo'."
   type        = string
   default     = ""
+}
+
+variable "ecr_image_tag_mutability" {
+  description = "Sets the tag mutability setting for the ECR repository. Recommended to be 'IMMUTABLE'. Valid values are 'MUTABLE' or 'IMMUTABLE'."
+  type        = string
+  default     = "IMMUTABLE"
+
+  validation {
+    condition     = contains(["MUTABLE", "IMMUTABLE"], var.ecr_image_tag_mutability)
+    error_message = "The ECR image tag mutability must be either 'MUTABLE' or 'IMMUTABLE'."
+  }
 }
 
 # S3 Bucket Name
