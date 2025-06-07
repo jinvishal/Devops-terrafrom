@@ -178,6 +178,12 @@ variable "grafana_admin_password" {
   sensitive   = true
 }
 
+variable "s3_loki_log_retention_days" {
+  description = "Number of days to retain Loki logs in the S3 bucket. After this period, logs will be expired. This applies to objects prefixed with 'loki/' if Loki is configured to use that prefix."
+  type        = number
+  default     = 30
+}
+
 # VPC Configuration Variables
 variable "vpc_cidr" {
   description = "The CIDR block for the VPC."

@@ -128,7 +128,7 @@ This module implements several infrastructure configurations that help support a
 
 *   **EBS Volume Encryption:** Worker node root volumes (EBS) are encrypted by default using AWS managed keys (AES-256). You can specify a customer-managed KMS key via the `ebs_kms_key_arn` variable for more control.
 *   **EKS Control Plane Logging:** All critical EKS control plane log types (`api`, `audit`, `authenticator`, `controllerManager`, `scheduler`) are enabled and sent to AWS CloudWatch Logs for audit and monitoring.
-*   **S3 Bucket Encryption & Versioning:** The general-purpose S3 bucket (which can be used by Loki) has server-side encryption (AES-256) and object versioning enabled by default. All public access to this bucket is blocked.
+*   **S3 Bucket Encryption, Versioning, and Log Retention:** The general-purpose S3 bucket (which can be used by Loki) has server-side encryption (AES-256) and object versioning enabled by default. All public access to this bucket is blocked. Additionally, for Loki data stored in S3 (under the 'loki/' prefix), a configurable lifecycle policy manages log retention (default 30 days via `s3_loki_log_retention_days`).
 *   **ECR Repository Encryption & Scanning:** The provisioned AWS ECR repository encrypts images at rest (AES-256) and enables image scanning on push to help identify vulnerabilities.
 *   **VPC Flow Logs:** Network traffic within the VPC is logged via VPC Flow Logs and sent to AWS CloudWatch Logs, providing an audit trail of network communications.
 *   **WAF Integration:** An AWS WAFv2 Web ACL is provisioned and associated with common AWS Managed Rule Groups (CommonRuleSet, AmazonIpReputationList, KnownBadInputsRuleSet, SQLiRuleSet) to protect web applications from common exploits.
@@ -144,6 +144,7 @@ This module implements several infrastructure configurations that help support a
 *   **AWS WAF (Web Application Firewall):** Helps protect your web applications or APIs against common web exploits that may affect availability, compromise security, or consume excessive resources.
 *   **Metrics Server:** A cluster-wide aggregator of resource usage data. It collects metrics like CPU and memory usage for pods and nodes, making them available for use by Horizontal Pod Autoscaler (HPA) and Vertical Pod Autoscaler (VPA).
 *   **Loki:** A horizontally scalable, highly available, multi-tenant log aggregation system inspired by Prometheus. It is designed to be very cost-effective and easy to operate. Logs are indexed by labels, not by content. This module can configure Loki to use the provisioned S3 bucket as a storage backend.
+    *   **Loki Log Retention:** If Loki is configured to use the S3 backend, a lifecycle policy is applied to the 'loki/' prefix in the S3 bucket to automatically expire log data after a configurable period (default 30 days, see `s3_loki_log_retention_days`). This helps manage storage costs and adhere to data retention policies.
 *   **Grafana:** An open-source platform for monitoring and observability. It allows you to query, visualize, alert on, and explore your metrics, logs, and traces wherever they are stored. This module installs Grafana and pre-configures Loki as a datasource. Persistence for Grafana data is enabled by default.
 
 ## 6. Inputs
@@ -181,6 +182,7 @@ This module implements several infrastructure configurations that help support a
 | `grafana_chart_version`            | Grafana Helm chart version.                                                                                                                                  | `string`       | `"7.0.19"`                                                                                                                                                        |
 | `grafana_namespace`                | Namespace for Grafana.                                                                                                                                       | `string`       | `"grafana"`                                                                                                                                                       |
 | `grafana_admin_password`           | Grafana admin password. IMPORTANT: Change this in production. Consider using a secrets manager.                                                              | `string`       | `"prom-operator"` (sensitive)                                                                                                                                               |
+| `s3_loki_log_retention_days`       | Number of days to retain Loki logs in the S3 bucket. After this period, logs will be expired. This applies to objects prefixed with 'loki/' if Loki is configured to use that prefix. | `number`       | `30`                                                                                                                                                              |
 
 ## 7. Outputs
 

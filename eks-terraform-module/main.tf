@@ -273,6 +273,37 @@ resource "aws_s3_bucket_public_access_block" "general_s3_bucket_public_access" {
   restrict_public_buckets = true
 }
 
+resource "aws_s3_bucket_lifecycle_configuration" "general_s3_bucket_lifecycle" {
+  # Check if the general_s3_bucket itself is created by this module
+  # This resource should only be created if aws_s3_bucket.general_s3_bucket is managed here.
+  # Assuming general_s3_bucket is always created by this module for now.
+  bucket = aws_s3_bucket.general_s3_bucket.id
+
+  rule {
+    id     = "lokiLogRetention"
+    status = "Enabled"
+
+    filter {
+      prefix = "loki/" # Loki stores data under this prefix as per loki_values.yaml.tpl
+    }
+
+    expiration {
+      days = var.s3_loki_log_retention_days
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.s3_loki_log_retention_days + 7 # Clean up old versions a bit later
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.general_s3_bucket_versioning] # Ensure versioning is enabled first
+}
+
+
 resource "aws_wafv2_web_acl" "default_web_acl" {
   name  = local.waf_web_acl_name_default
   scope = "REGIONAL"
