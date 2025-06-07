@@ -171,7 +171,13 @@ resource "aws_eks_cluster" "main" {
   enabled_cluster_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
 
   vpc_config {
-    subnet_ids = module.vpc.private_subnet_ids
+    subnet_ids              = module.vpc.private_subnet_ids
+    endpoint_public_access  = var.eks_endpoint_public_access
+    endpoint_private_access = var.eks_endpoint_private_access
+    public_access_cidrs     = var.eks_endpoint_public_access ? var.eks_public_access_cidrs : null # Only apply if public access is true
+    # Ensure that if public access is false, public_access_cidrs is not set or is null/empty,
+    # as AWS API might reject ["0.0.0.0/0"] if endpoint_public_access is false.
+    # Setting to null if public access is disabled is safer.
   }
 
   tags = local.tags

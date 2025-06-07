@@ -10,6 +10,24 @@ variable "cluster_version" {
   default     = "1.27"
 }
 
+variable "eks_endpoint_public_access" {
+  description = "Controls whether the EKS cluster endpoint is publicly accessible."
+  type        = bool
+  default     = true
+}
+
+variable "eks_endpoint_private_access" {
+  description = "Controls whether the EKS cluster endpoint is accessible from within the VPC. If public access is disabled, private access must be enabled for kubectl and other API interactions from within the VPC."
+  type        = bool
+  default     = false # Defaulting to false to maintain current behavior unless explicitly changed.
+}
+
+variable "eks_public_access_cidrs" {
+  description = "List of CIDR blocks that are allowed to access the EKS public endpoint. Only applies if eks_endpoint_public_access is true. Default allows all IPs."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
 variable "instance_type" {
   description = "The EC2 instance type for the worker nodes."
   type        = string
