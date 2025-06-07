@@ -249,7 +249,7 @@ resource "aws_eks_node_group" "final_main_node_group" {
 # ECR Repository
 resource "aws_ecr_repository" "app_ecr_repo" {
   name                 = local.ecr_repo_name_default
-  image_tag_mutability = "MUTABLE"
+  image_tag_mutability = var.ecr_image_tag_mutability
   image_scanning_configuration { scan_on_push = true }
   encryption_configuration { encryption_type = "AES256" }
   tags = local.tags

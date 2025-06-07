@@ -54,6 +54,17 @@ variable "ecr_repository_name" {
   default     = ""
 }
 
+variable "ecr_image_tag_mutability" {
+  description = "Sets the tag mutability setting for the ECR repository. Recommended to be 'IMMUTABLE'. Valid values are 'MUTABLE' or 'IMMUTABLE'."
+  type        = string
+  default     = "IMMUTABLE"
+
+  validation {
+    condition     = contains(["MUTABLE", "IMMUTABLE"], var.ecr_image_tag_mutability)
+    error_message = "The ECR image tag mutability must be either 'MUTABLE' or 'IMMUTABLE'."
+  }
+}
+
 # S3 Bucket Name
 variable "s3_bucket_name" {
   description = "The name for the general purpose S3 bucket. Must be globally unique. If empty, it defaults to '${var.cluster_name}-general-storage'. Consider adding a random suffix or account ID in production for uniqueness."
