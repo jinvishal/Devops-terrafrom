@@ -180,6 +180,16 @@ resource "aws_eks_cluster" "main" {
     # Setting to null if public access is disabled is safer.
   }
 
+  dynamic "encryption_config" {
+    for_each = var.eks_secrets_encryption_kms_key_arn != "" ? [1] : [] # Create block only if KMS key ARN is provided
+    content {
+      resources = ["secrets"] # Specifies that Kubernetes secrets should be encrypted
+      provider {
+        key_arn = var.eks_secrets_encryption_kms_key_arn
+      }
+    }
+  }
+
   tags = local.tags
 }
 

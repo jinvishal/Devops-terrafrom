@@ -28,6 +28,12 @@ variable "eks_public_access_cidrs" {
   default     = ["0.0.0.0/0"]
 }
 
+variable "eks_secrets_encryption_kms_key_arn" {
+  description = "Optional. ARN of the AWS KMS Customer Managed Key (CMK) to use for encrypting Kubernetes secrets in EKS. If not provided, EKS uses an AWS-managed KMS key. Ensure the EKS cluster IAM role has encrypt/decrypt permissions on this key."
+  type        = string
+  default     = "" # Defaulting to empty string, meaning CMK encryption is off by default.
+}
+
 variable "instance_type" {
   description = "The EC2 instance type for the worker nodes."
   type        = string
