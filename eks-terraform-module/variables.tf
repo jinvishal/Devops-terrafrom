@@ -215,6 +215,49 @@ variable "vpc_enable_nat_gateway" {
   default     = true
 }
 
+variable "loki_enable_irsa" {
+  description = "Enable IAM Roles for Service Accounts (IRSA) for Loki to access S3."
+  type        = bool
+  default     = true # Default to true as it's a security best practice
+}
+
+variable "s3_loki_log_retention_days" {
+  description = "Number of days to retain Loki logs in the S3 bucket. After this period, logs will be expired. This applies to objects prefixed with 'loki/' if Loki is configured to use that prefix."
+  type        = number
+  default     = 30
+}
+
+# VPC Configuration Variables
+variable "vpc_cidr" {
+  description = "The CIDR block for the VPC."
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "vpc_azs" {
+  description = "A list of Availability Zones for the VPC."
+  type        = list(string)
+  default     = ["us-west-2a", "us-west-2b"]
+}
+
+variable "vpc_private_subnets" {
+  description = "A list of CIDR blocks for private subnets in the VPC."
+  type        = list(string)
+  default     = ["10.0.1.0/24", "10.0.2.0/24"]
+}
+
+variable "vpc_public_subnets" {
+  description = "A list of CIDR blocks for public subnets in the VPC."
+  type        = list(string)
+  default     = ["10.0.101.0/24", "10.0.102.0/24"]
+}
+
+variable "vpc_enable_nat_gateway" {
+  description = "Enable NAT gateway for private subnets."
+  type        = bool
+  default     = true
+}
+
 variable "vpc_single_nat_gateway" {
   description = "Use a single NAT gateway. Requires vpc_enable_nat_gateway to be true."
   type        = bool

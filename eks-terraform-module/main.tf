@@ -303,6 +303,74 @@ resource "aws_s3_bucket_lifecycle_configuration" "general_s3_bucket_lifecycle" {
   depends_on = [aws_s3_bucket_versioning.general_s3_bucket_versioning] # Ensure versioning is enabled first
 }
 
+resource "aws_iam_policy" "loki_s3_access_policy" {
+  name_prefix = var.cluster_name # To keep it shorter than the full policy name if it exceeds limits
+  name        = "${var.cluster_name}-loki-s3-access-policy"
+  description = "IAM policy granting Loki access to its S3 bucket prefix."
+
+  policy = jsonencode({
+    Version   = "2012-10-17",
+    Statement = [
+      {
+        Sid    = "LokiListBucket",
+        Effect = "Allow",
+        Action = "s3:ListBucket",
+        Resource = aws_s3_bucket.general_s3_bucket.arn,
+        Condition = {
+          "StringLike" = {
+            "s3:prefix" = ["loki/*"]
+          }
+        }
+      },
+      {
+        Sid    = "LokiReadWriteDeleteObjects",
+        Effect = "Allow",
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:DeleteObject"
+        ],
+        Resource = "${aws_s3_bucket.general_s3_bucket.arn}/loki/*"
+      }
+    ]
+  })
+
+  tags = local.tags
+}
+
+# IAM Role for Loki Service Account (IRSA)
+data "aws_iam_policy_document" "loki_irsa_assume_role_policy" {
+  count = var.loki_enable_irsa ? 1 : 0 # Create policy doc only if IRSA is enabled
+
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    effect  = "Allow"
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_eks_cluster.main.identity[0].oidc[0].provider] # Correct way to reference OIDC provider ARN
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:sub" # OIDC Issuer URL without https://
+      values   = ["system:serviceaccount:${var.loki_namespace}:loki-sa"] # Matches SA name in loki_values.yaml.tpl
+    }
+  }
+}
+
+resource "aws_iam_role" "loki_irsa_role" {
+  name_prefix        = "${var.cluster_name}-loki-irsa-"
+  assume_role_policy = var.loki_enable_irsa ? data.aws_iam_policy_document.loki_irsa_assume_role_policy[0].json : null
+  tags               = local.tags
+  count              = var.loki_enable_irsa ? 1 : 0 # Create role only if IRSA is enabled
+}
+
+resource "aws_iam_role_policy_attachment" "loki_irsa_role_s3_policy_attachment" {
+  count      = var.loki_enable_irsa ? 1 : 0 # Attach only if IRSA role is created
+  role       = aws_iam_role.loki_irsa_role[0].name
+  policy_arn = aws_iam_policy.loki_s3_access_policy.arn
+}
 
 resource "aws_wafv2_web_acl" "default_web_acl" {
   name  = local.waf_web_acl_name_default
@@ -384,15 +452,17 @@ resource "helm_release" "loki" {
   create_namespace = false # Using explicit kubernetes_namespace resource
 
   values = [templatefile("${path.module}/loki_values.yaml.tpl", {
-    s3_bucket_name = local.loki_s3_actual_bucket_name
-    s3_region      = data.aws_region.current.name
-    s3_enabled     = var.install_loki_s3_backend
+    s3_bucket_name       = local.loki_s3_actual_bucket_name
+    s3_region            = data.aws_region.current.name
+    s3_enabled           = var.install_loki_s3_backend
+    loki_irsa_role_arn   = var.loki_enable_irsa && count.index < length(aws_iam_role.loki_irsa_role) ? aws_iam_role.loki_irsa_role[0].arn : null
   })]
 
   depends_on = [
     aws_eks_node_group.final_main_node_group,
     kubernetes_namespace.loki_ns[0], # Ensure namespace exists
     aws_s3_bucket.general_s3_bucket, # Ensure bucket exists if used for Loki
+    aws_iam_role.loki_irsa_role,     # Ensure IAM role for IRSA exists
   ]
 }
 

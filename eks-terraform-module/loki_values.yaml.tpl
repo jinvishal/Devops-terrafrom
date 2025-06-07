@@ -409,10 +409,11 @@ persistence:
 # Service account for Loki
 serviceAccount:
   create: true
-  name: "loki-sa" # Renamed to avoid conflict with potential 'loki' chart name
-  # Annotations for IRSA if using S3 and IRSA is configured
-  # annotations:
-  #   eks.amazonaws.com/role-arn: "arn:aws:iam::YOUR_ACCOUNT_ID:role/YourLokiS3Role"
+  name: "loki-sa" # This name must match the one in the IAM role trust policy
+  annotations:
+    %{ if loki_irsa_role_arn != null ~}
+    "eks.amazonaws.com/role-arn": "${loki_irsa_role_arn}"
+    %{ endif ~}
 
 # RBAC for Loki
 rbac:
